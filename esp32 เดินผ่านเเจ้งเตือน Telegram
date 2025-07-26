@@ -1,0 +1,82 @@
+#include <WiFi.h>  // ใช้งาน WiFi กับ ESP32
+#include <HTTPClient.h> // ใช้สำหรับ HTTP Request (ส่งไป Telegram)
+
+const char* ssid = "Name WiFi";
+const char* password = "Password WiFi";
+
+const long gmtOffset_sec = 7 * 3600; // GMT+7 (ประเทศไทย)
+const int daylightOffset_sec = 0; // ไม่ใช้เวลาออมแสง
+
+String botToken = "Bot Token Telegram";
+String chatID = "Chat ID";
+
+const int pirPin = 23; // กำหนดขา PIR → ต่อที่ขา GPIO23
+bool motionDetected = false; // ใช้เก็บสถานะว่าตรวจจับคนอยู่ไหม
+unsigned long startTime = 0; // เวลาที่เริ่มตรวจเจอการเคลื่อนไหว
+
+String getCurrentTime() {  //ฟังก์ชันแสดงวันเวลา
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "TIME_ERROR";
+
+  char buffer[32];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(buffer);
+}
+
+void setup() {
+  Serial.begin(115200); // เปิด Serial Monitor ความเร็ว 115200
+  pinMode(pirPin, INPUT); // ตั้งขา PIR เป็น input
+  
+
+  WiFi.begin(ssid, password); // เชื่อม WiFi
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org"); // ตั้งค่าเวลา
+}
+
+void loop() {
+  int sensorState = digitalRead(pirPin); // อ่านค่าสถานะของเซนเซอร์ PIR
+  String now = getCurrentTime(); // ดึงเวลาปัจจุบัน
+
+  if (sensorState == HIGH && !motionDetected) {
+    // เริ่มจับเวลาเมื่อเจอคน
+    motionDetected = true;
+    startTime = millis();
+    Serial.println("ตรวจพบคน!");
+  }
+
+  if (sensorState == LOW && motionDetected) {
+    // คนเดินออกไป → จบการจับเวลา
+    motionDetected = false;
+    unsigned long endTime = millis();
+    unsigned long duration = (endTime - startTime) / 1000; // วินาที
+
+    String message = "🚨 มีคนอยู่ใกล้เซนเซอร์นาน " + String(duration) + " วินาที" + " ณ เวลา:"+String(now); // ส่งข้อความไป Telegram
+    sendTelegramMessage(message);
+    Serial.println(message);
+  }
+
+  delay(100);
+  Serial.println(sensorState);
+}
+
+void sendTelegramMessage(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = "https://api.telegram.org/bot" + botToken + "/sendMessage?chat_id=" + chatID + "&text=" + message;
+
+    http.begin(url); // เริ่ม HTTP GET
+    int httpCode = http.GET(); // ส่งคำขอ
+
+    if (httpCode > 0) {
+      Serial.println("ส่งข้อความสำเร็จ");
+    } else {
+      Serial.printf("ส่งไม่สำเร็จ: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end(); // ปิดการเชื่อมต่อ
+  }
+}
